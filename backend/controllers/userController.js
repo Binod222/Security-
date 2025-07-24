@@ -21,7 +21,8 @@ function validatePassword(password) {
 
   if (!hasUpperCase) return "Password must include at least one uppercase letter.";
   if (!hasLowerCase) return "Password must include at least one lowercase letter.";
-
+  if (!hasNumber) return "Password must include at least one number.";
+  
 
   return null; // valid
 }
