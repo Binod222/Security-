@@ -29,7 +29,6 @@
 
 // export default router;
 
-
 import express from "express";
 // controllers
 import {
@@ -43,7 +42,7 @@ import {
 
 // middlewares
 import { authenticate, authorizeAdmin } from "../middlewares/authMiddleware.js";
-import { loginLimiter } from "../middlewares/rateLimiter.js"; // ✅ import limiter
+import loginLimiter from "../middlewares/rateLimiter.js"; // ✅ FIXED: default import!
 
 const router = express.Router();
 
