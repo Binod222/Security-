@@ -3,45 +3,36 @@ import bcrypt from "bcryptjs";
 import asyncHandler from "../middlewares/asyncHandler.js";
 import createToken from "../utils/createToken.js";
 
-/**
- * Password validation helper
- */
-function validatePassword(password) {
-  const minLength = 8;
-  const maxLength = 20;
+// Helper: Validate password complexity
+function isPasswordStrong(password) {
+  const lengthRegex = /^.{8,20}$/; // Min 8, max 20 chars
+  const uppercaseRegex = /[A-Z]/;
+  const lowercaseRegex = /[a-z]/;
+  const numberRegex = /[0-9]/;
+  const specialCharRegex = /[!@#$%^&*(),.?":{}|<>]/;
 
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
-  const hasSpecialChar = /[!@#\$%\^&\*]/.test(password);
-
-  if (password.length < minLength || password.length > maxLength) {
-    return `Password must be between ${minLength} and ${maxLength} characters.`;
-  }
-
-  if (!hasUpperCase) return "Password must include at least one uppercase letter.";
-  if (!hasLowerCase) return "Password must include at least one lowercase letter.";
-  if (!hasNumber) return "Password must include at least one number.";
-  if (!hasSpecialChar) return "Password must include at least one special character.";
-
-  return null; // valid
+  return (
+    lengthRegex.test(password) &&
+    uppercaseRegex.test(password) &&
+    lowercaseRegex.test(password) &&
+    numberRegex.test(password) &&
+    specialCharRegex.test(password)
+  );
 }
 
-/**
- * @desc    Register new user
- */
+// @desc Register new user
 const createUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
-    res.status(400);
     throw new Error("Please fill all the fields");
   }
 
-  const passwordError = validatePassword(password);
-  if (passwordError) {
+  if (!isPasswordStrong(password)) {
     res.status(400);
-    throw new Error(passwordError);
+    throw new Error(
+      "Password must be 8-20 characters and include uppercase, lowercase, number, and special character."
+    );
   }
 
   const userExists = await User.findOne({ email });
@@ -52,7 +43,15 @@ const createUser = asyncHandler(async (req, res) => {
 
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
-  const newUser = new User({ username, email, password: hashedPassword });
+
+  const newUser = new User({
+    username,
+    email,
+    password: hashedPassword,
+    passwordHistory: [{ password: hashedPassword }],
+    passwordChangedAt: new Date(),
+    passwordExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // expires in 90 days
+  });
 
   await newUser.save();
   createToken(res, newUser._id);
@@ -65,9 +64,7 @@ const createUser = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * @desc    Login user
- */
+// @desc Login user
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
@@ -76,6 +73,15 @@ const loginUser = asyncHandler(async (req, res) => {
   if (!existingUser) {
     res.status(401);
     throw new Error("User not found");
+  }
+
+  // Check password expiry
+  if (
+    existingUser.passwordExpiry &&
+    existingUser.passwordExpiry < new Date()
+  ) {
+    res.status(403);
+    throw new Error("Your password has expired. Please reset it.");
   }
 
   const isPasswordValid = await bcrypt.compare(password, existingUser.password);
@@ -87,7 +93,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   createToken(res, existingUser._id);
 
-  res.status(200).json({
+  res.status(201).json({
     _id: existingUser._id,
     username: existingUser.username,
     email: existingUser.email,
@@ -95,9 +101,7 @@ const loginUser = asyncHandler(async (req, res) => {
   });
 });
 
-/**
- * @desc    Logout user
- */
+// @desc Logout user
 const logoutCurrentUser = asyncHandler(async (req, res) => {
   res.cookie("jwt", "", {
     httpOnly: true,
@@ -107,35 +111,29 @@ const logoutCurrentUser = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-/**
- * @desc    Get all users
- */
+// @desc Get all users (admin)
 const getAllUsers = asyncHandler(async (req, res) => {
   const users = await User.find({});
   res.json(users);
 });
 
-/**
- * @desc    Get current user profile
- */
+// @desc Get current user profile
 const getCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
-  if (!user) {
+  if (user) {
+    res.json({
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+    });
+  } else {
     res.status(404);
     throw new Error("User not found.");
   }
-
-  res.json({
-    _id: user._id,
-    username: user.username,
-    email: user.email,
-  });
 });
 
-/**
- * @desc    Update current user profile
- */
+// @desc Update current user profile
 const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
@@ -148,15 +146,35 @@ const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   user.email = req.body.email || user.email;
 
   if (req.body.password) {
-    const passwordError = validatePassword(req.body.password);
-    if (passwordError) {
+    if (!isPasswordStrong(req.body.password)) {
       res.status(400);
-      throw new Error(passwordError);
+      throw new Error(
+        "Password must be 8-20 characters and include uppercase, lowercase, number, and special character."
+      );
+    }
+
+    // Check for reuse
+    for (const old of user.passwordHistory) {
+      const isSame = await bcrypt.compare(req.body.password, old.password);
+      if (isSame) {
+        res.status(400);
+        throw new Error("You cannot reuse a recent password.");
+      }
     }
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(req.body.password, salt);
+
     user.password = hashedPassword;
+    user.passwordHistory.push({ password: hashedPassword });
+
+    // Keep only last 5
+    if (user.passwordHistory.length > 5) {
+      user.passwordHistory.shift();
+    }
+
+    user.passwordChangedAt = new Date();
+    user.passwordExpiry = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
   }
 
   const updatedUser = await user.save();
