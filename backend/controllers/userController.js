@@ -20,7 +20,7 @@ function isPasswordStrong(password) {
   );
 }
 
-// @desc Register new user
+// Register new user
 const createUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
 
@@ -64,7 +64,7 @@ const createUser = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc Login user
+// Login user
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
@@ -88,7 +88,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   if (!isPasswordValid) {
     res.status(401);
-    throw new Error("Invalid Password");
+    throw new Error("Wrong Password");
   }
 
   createToken(res, existingUser._id);
