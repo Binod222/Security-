@@ -32,9 +32,7 @@
 
 // export default router;
 
-
 import express from "express";
-// controllers
 import {
   createUser,
   loginUser,
@@ -42,31 +40,26 @@ import {
   getAllUsers,
   getCurrentUserProfile,
   updateCurrentUserProfile,
-  refreshToken, // ✅ NEW
+  refreshToken,  // import the refresh controller
 } from "../controllers/userController.js";
 
-// middlewares
 import { authenticate, authorizeAdmin } from "../middlewares/authMiddleware.js";
 import loginLimiter from "../middlewares/rateLimiter.js";
 
 const router = express.Router();
 
-// Register new user / Get all users (admin only)
 router
   .route("/")
   .post(createUser)
   .get(authenticate, authorizeAdmin, getAllUsers);
 
-// Login with rate limiter
 router.post("/auth", loginLimiter, loginUser);
 
-// Refresh token route ✅ NEW
-router.get("/refresh", refreshToken);
-
-// Logout user
 router.post("/logout", logoutCurrentUser);
 
-// Current user profile routes
+// NEW: Add the refresh token route (no auth middleware needed, token from cookie)
+router.get("/refresh", refreshToken);
+
 router
   .route("/profile")
   .get(authenticate, getCurrentUserProfile)

@@ -197,16 +197,15 @@
 // };
 
 
-
+import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import asyncHandler from "../middlewares/asyncHandler.js";
-import { attachTokens, generateAccessToken } from "../utils/createToken.js";
-import jwt from "jsonwebtoken";
+import createToken from "../utils/createToken.js";
 
 // Helper: Validate password complexity
 function isPasswordStrong(password) {
-  const lengthRegex = /^.{8,20}$/;
+  const lengthRegex = /^.{8,20}$/; // Min 8, max 20 chars
   const uppercaseRegex = /[A-Z]/;
   const lowercaseRegex = /[a-z]/;
   const numberRegex = /[0-9]/;
@@ -222,7 +221,7 @@ function isPasswordStrong(password) {
 }
 
 // Register new user
-export const createUser = asyncHandler(async (req, res) => {
+const createUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
@@ -251,12 +250,14 @@ export const createUser = asyncHandler(async (req, res) => {
     password: hashedPassword,
     passwordHistory: [{ password: hashedPassword }],
     passwordChangedAt: new Date(),
-    passwordExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    passwordExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // expires in 90 days
   });
 
   await newUser.save();
 
-  attachTokens(res, newUser._id);
+  // Issue access and refresh tokens
+  createToken.generateAccessToken(res, newUser._id);
+  createToken.generateRefreshToken(res, newUser._id);
 
   res.status(201).json({
     _id: newUser._id,
@@ -267,7 +268,7 @@ export const createUser = asyncHandler(async (req, res) => {
 });
 
 // Login user
-export const loginUser = asyncHandler(async (req, res) => {
+const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
   const existingUser = await User.findOne({ email });
@@ -289,9 +290,11 @@ export const loginUser = asyncHandler(async (req, res) => {
     throw new Error("Wrong Password");
   }
 
-  attachTokens(res, existingUser._id);
+  // Issue access and refresh tokens
+  createToken.generateAccessToken(res, existingUser._id);
+  createToken.generateRefreshToken(res, existingUser._id);
 
-  res.status(200).json({
+  res.status(201).json({
     _id: existingUser._id,
     username: existingUser.username,
     email: existingUser.email,
@@ -299,41 +302,47 @@ export const loginUser = asyncHandler(async (req, res) => {
   });
 });
 
-// Refresh token
-export const refreshToken = asyncHandler(async (req, res) => {
-  const token = req.cookies.jwt_refresh;
+// Refresh access token using refresh token
+const refreshToken = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies.jwt;
 
-  if (!token) {
+  if (!refreshToken) {
     res.status(401);
-    throw new Error("No refresh token provided");
+    throw new Error("No refresh token provided.");
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
 
-    const accessToken = generateAccessToken(decoded.userId);
+    const user = await User.findById(decoded.userId).select("-password");
+    if (!user) {
+      res.status(401);
+      throw new Error("User not found.");
+    }
 
-    res.cookie("jwt_access", accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV !== "development",
-      sameSite: "strict",
-      maxAge: 15 * 60 * 1000,
+    // Issue new access token only
+    createToken.generateAccessToken(res, user._id);
+
+    res.status(200).json({
+      message: "Access token refreshed.",
+      _id: user._id,
+      username: user.username,
+      email: user.email,
+      isAdmin: user.isAdmin,
     });
-
-    res.status(200).json({ message: "Access token refreshed" });
   } catch (err) {
     res.status(403);
-    throw new Error("Invalid refresh token");
+    throw new Error("Invalid refresh token.");
   }
 });
 
-// Logout
-export const logoutCurrentUser = asyncHandler(async (req, res) => {
-  res.cookie("jwt_access", "", {
+// Logout user (clear both access and refresh cookies)
+const logoutCurrentUser = asyncHandler(async (req, res) => {
+  res.cookie("jwt", "", {
     httpOnly: true,
     expires: new Date(0),
   });
-  res.cookie("jwt_refresh", "", {
+  res.cookie("jwt_access", "", {
     httpOnly: true,
     expires: new Date(0),
   });
@@ -341,14 +350,14 @@ export const logoutCurrentUser = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-// Get all users (admin)
-export const getAllUsers = asyncHandler(async (req, res) => {
+// @desc Get all users (admin)
+const getAllUsers = asyncHandler(async (req, res) => {
   const users = await User.find({});
   res.json(users);
 });
 
-// Get current user
-export const getCurrentUserProfile = asyncHandler(async (req, res) => {
+// @desc Get current user profile
+const getCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
   if (user) {
@@ -363,8 +372,8 @@ export const getCurrentUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
-// Update current user
-export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
+// @desc Update current user profile
+const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
   if (!user) {
@@ -383,6 +392,7 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
       );
     }
 
+    // Check for reuse
     for (const old of user.passwordHistory) {
       const isSame = await bcrypt.compare(req.body.password, old.password);
       if (isSame) {
@@ -397,6 +407,7 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
     user.password = hashedPassword;
     user.passwordHistory.push({ password: hashedPassword });
 
+    // Keep only last 5 passwords
     if (user.passwordHistory.length > 5) {
       user.passwordHistory.shift();
     }
@@ -414,3 +425,13 @@ export const updateCurrentUserProfile = asyncHandler(async (req, res) => {
     isAdmin: updatedUser.isAdmin,
   });
 });
+
+export {
+  createUser,
+  loginUser,
+  logoutCurrentUser,
+  getAllUsers,
+  getCurrentUserProfile,
+  updateCurrentUserProfile,
+  refreshToken,
+};
