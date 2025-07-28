@@ -18,38 +18,40 @@
 
 // export default generateToken;
 
-
 import jwt from "jsonwebtoken";
 
-export const generateAccessToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_SECRET, {
-    expiresIn: "15m", // short-lived
-  });
+const createToken = {
+  generateAccessToken: (res, userId) => {
+    const token = jwt.sign({ userId }, process.env.JWT_SECRET, {
+      expiresIn: "15m", // short lived access token
+    });
+
+    // Set access token as HTTP-only cookie
+    res.cookie("jwt_access", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV !== "development",
+      sameSite: "strict",
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    });
+
+    return token;
+  },
+
+  generateRefreshToken: (res, userId) => {
+    const token = jwt.sign({ userId }, process.env.JWT_SECRET, {
+      expiresIn: "7d", // longer refresh token
+    });
+
+    // Set refresh token as HTTP-only cookie
+    res.cookie("jwt", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV !== "development",
+      sameSite: "strict",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return token;
+  },
 };
 
-export const generateRefreshToken = (userId) => {
-  return jwt.sign({ userId }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: "7d", // long-lived
-  });
-};
-
-export const attachTokens = (res, userId) => {
-  const accessToken = generateAccessToken(userId);
-  const refreshToken = generateRefreshToken(userId);
-
-  // Access Token Cookie
-  res.cookie("jwt_access", accessToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV !== "development",
-    sameSite: "strict",
-    maxAge: 15 * 60 * 1000, // 15 mins
-  });
-
-  // Refresh Token Cookie
-  res.cookie("jwt_refresh", refreshToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV !== "development",
-    sameSite: "strict",
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  });
-};
+export default createToken;
