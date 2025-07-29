@@ -1,7 +1,8 @@
 // import User from "../models/User.js";
 // import bcrypt from "bcryptjs";
+// import { sendVerificationEmail } from "../utils/sendEmails.js";
 // import asyncHandler from "../middlewares/asyncHandler.js";
-// import generateToken from "../utils/createToken.js";
+// import { generateAccessToken, generateRefreshToken } from "../utils/createToken.js";
 // import jwt from "jsonwebtoken";
 
 // // Helper: Validate password complexity
@@ -55,7 +56,8 @@
 //     passwordExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
 //   });
 
-//   generateToken(res, newUser._id);
+//   generateAccessToken(res, newUser._id);
+//   generateRefreshToken(res, newUser._id);
 
 //   res.status(201).json({
 //     _id: newUser._id,
@@ -88,7 +90,8 @@
 //     throw new Error("Invalid credentials");
 //   }
 
-//   generateToken(res, user._id);
+//   generateAccessToken(res, user._id);
+//   generateRefreshToken(res, user._id);
 
 //   res.json({
 //     _id: user._id,
@@ -105,12 +108,17 @@
 //     expires: new Date(0),
 //   });
 
+//   res.cookie("jwt_access", "", {
+//     httpOnly: true,
+//     expires: new Date(0),
+//   });
+
 //   res.status(200).json({ message: "Logged out successfully" });
 // });
 
 // // Refresh token
 // const refreshToken = asyncHandler(async (req, res) => {
-//   const token = req.cookies.jwt; // get token from cookie
+//   const token = req.cookies.jwt;
 
 //   if (!token) {
 //     res.status(401);
@@ -118,10 +126,8 @@
 //   }
 
 //   try {
-//     // Verify token
 //     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-//     // Find user from token payload
 //     const user = await User.findById(decoded.userId).select("-password");
 
 //     if (!user) {
@@ -129,20 +135,9 @@
 //       throw new Error("User not found");
 //     }
 
-//     // Issue a new token (access token)
-//     const newToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, {
-//       expiresIn: "30d",
-//     });
+//     // Issue new access token only
+//     generateAccessToken(res, user._id);
 
-//     // Set new cookie with new token
-//     res.cookie("jwt", newToken, {
-//       httpOnly: true,
-//       secure: process.env.NODE_ENV !== "development",
-//       sameSite: "strict",
-//       maxAge: 30 * 24 * 60 * 60 * 1000,
-//     });
-
-//     // Send back user info (optional)
 //     res.json({
 //       _id: user._id,
 //       username: user.username,
@@ -241,11 +236,15 @@
 
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
+import { sendVerificationEmail } from "../utils/sendEmails.js";
 import asyncHandler from "../middlewares/asyncHandler.js";
-import { generateAccessToken, generateRefreshToken } from "../utils/createToken.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../utils/createToken.js";
 import jwt from "jsonwebtoken";
 
-// Helper: Validate password complexity
+// ✅ Password check helper
 function isPasswordStrong(password) {
   const lengthRegex = /^.{8,20}$/;
   const uppercaseRegex = /[A-Z]/;
@@ -262,7 +261,7 @@ function isPasswordStrong(password) {
   );
 }
 
-// Register
+// ✅ Register user & send OTP
 const createUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
 
@@ -287,6 +286,9 @@ const createUser = asyncHandler(async (req, res) => {
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
 
+  // ✅ Generate OTP
+  const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
   const newUser = await User.create({
     username,
     email,
@@ -294,20 +296,59 @@ const createUser = asyncHandler(async (req, res) => {
     passwordHistory: [{ password: hashedPassword }],
     passwordChangedAt: new Date(),
     passwordExpiry: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    emailVerificationCode: verificationCode,
+    isVerified: false,
   });
 
-  generateAccessToken(res, newUser._id);
-  generateRefreshToken(res, newUser._id);
+  await sendVerificationEmail(email, verificationCode);
 
   res.status(201).json({
-    _id: newUser._id,
-    username: newUser.username,
-    email: newUser.email,
-    isAdmin: newUser.isAdmin,
+    message: "Account created. A verification code has been sent to your email.",
   });
 });
 
-// Login
+// ✅ Verify OTP & activate account
+const verifyUser = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    res.status(400);
+    throw new Error("Email and code are required");
+  }
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    res.status(400);
+    throw new Error("Invalid email");
+  }
+
+  if (user.isVerified) {
+    res.status(400);
+    throw new Error("User is already verified");
+  }
+
+  if (user.emailVerificationCode !== code) {
+    res.status(400);
+    throw new Error("Invalid verification code");
+  }
+
+  user.isVerified = true;
+  user.emailVerificationCode = undefined;
+  await user.save();
+
+  // ✅ Generate JWT now that user is verified
+  generateAccessToken(res, user._id);
+  generateRefreshToken(res, user._id);
+
+  res.status(200).json({
+    _id: user._id,
+    username: user.username,
+    email: user.email,
+    isAdmin: user.isAdmin,
+  });
+});
+
+// ✅ Login - block if not verified
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
@@ -316,6 +357,11 @@ const loginUser = asyncHandler(async (req, res) => {
   if (!user) {
     res.status(401);
     throw new Error("Invalid credentials");
+  }
+
+  if (!user.isVerified) {
+    res.status(401);
+    throw new Error("Please verify your email first");
   }
 
   if (user.passwordExpiry < new Date()) {
@@ -341,7 +387,7 @@ const loginUser = asyncHandler(async (req, res) => {
   });
 });
 
-// Logout
+// ✅ Logout
 const logoutCurrentUser = asyncHandler(async (req, res) => {
   res.cookie("jwt", "", {
     httpOnly: true,
@@ -356,7 +402,7 @@ const logoutCurrentUser = asyncHandler(async (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-// Refresh token
+// ✅ Refresh token
 const refreshToken = asyncHandler(async (req, res) => {
   const token = req.cookies.jwt;
 
@@ -375,7 +421,6 @@ const refreshToken = asyncHandler(async (req, res) => {
       throw new Error("User not found");
     }
 
-    // Issue new access token only
     generateAccessToken(res, user._id);
 
     res.json({
@@ -390,7 +435,7 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 });
 
-// Get profile
+// ✅ Get current user
 const getCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
@@ -407,7 +452,7 @@ const getCurrentUserProfile = asyncHandler(async (req, res) => {
   });
 });
 
-// Update profile
+// ✅ Update profile
 const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
@@ -457,14 +502,16 @@ const updateCurrentUserProfile = asyncHandler(async (req, res) => {
   });
 });
 
-// Admin get all users
+// ✅ Admin: get all users
 const getAllUsers = asyncHandler(async (req, res) => {
   const users = await User.find({});
   res.json(users);
 });
 
+// ✅ EXPORT ALL
 export {
   createUser,
+  verifyUser,
   loginUser,
   logoutCurrentUser,
   getAllUsers,

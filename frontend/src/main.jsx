@@ -20,6 +20,7 @@ import Profile from "./pages/User/Profile.jsx";
 import AdminMoviesList from "./pages/Admin/AdminMoviesList.jsx";
 import UpdateMovie from "./pages/Admin/UpdateMovie.jsx";
 import CreateMovie from "./pages/Admin/CreateMovie.jsx";
+import Verify from "./pages/Auth/Verify.jsx";
 import AllMovies from "./pages/Movies/AllMovies.jsx";
 import MovieDetails from "./pages/Movies/MovieDetails.jsx";
 import AllComments from "./pages/Admin/AllComments.jsx";
@@ -32,6 +33,7 @@ const router = createBrowserRouter(
       <Route path="/movies" element={<AllMovies />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/verify" element={<Verify />} /> {}
       <Route path="/movies/:id" element={<MovieDetails />} />
 
       <Route path="" element={<PrivateRoute />}>
