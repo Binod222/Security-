@@ -1,4 +1,12 @@
-
+// import User from "../models/User.js";
+// import bcrypt from "bcryptjs";
+// import { sendVerificationEmail } from "../utils/sendEmails.js";
+// import asyncHandler from "../middlewares/asyncHandler.js";
+// import {
+//   generateAccessToken,
+//   generateRefreshToken,
+// } from "../utils/createToken.js";
+// import jwt from "jsonwebtoken";
 
 // // ✅ Password check helper
 // function isPasswordStrong(password) {
